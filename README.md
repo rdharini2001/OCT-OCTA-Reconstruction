@@ -1,7 +1,5 @@
 # OCTAVE
 
-**Minimal OCT/OCTA reconstruction, FAZ analysis & retinal imaging workstation.**
-
 ![Actual OCTAVE interface, empty library](docs/preview-empty.png)
 
 > **Research use only. Not clinically validated.** OCTA vessel analysis requires a **separate, registered, real flow/decorrelation volume**; blood flow cannot be recovered from an ordinary structural OCT scan. No sample/patient data, synthetic cases, or external UI assets are included.
