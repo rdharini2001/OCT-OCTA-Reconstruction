@@ -1,0 +1,32 @@
+# Patient or derived volume data
+runtime-data/
+backend/runtime-data/
+patient*/
+patients/
+data/
+*.dcm
+*.vol
+*.e2e
+*.npy
+*.npz
+*.tif
+*.tiff
+*patient*.zip
+*OctDenoise*.zip
+*Flow-[0-9]*.zip
+# Python
+__pycache__/
+.pytest_cache/
+*.py[cod]
+.venv/
+venv/
+.env
+# Frontend
+node_modules/
+*.tsbuildinfo
+# Keep bundled frontend/dist/ as dependency-free runnable app.
+# Developer
+.DS_Store
+.idea/
+.vscode/
+*.log

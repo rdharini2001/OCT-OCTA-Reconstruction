@@ -1,0 +1,13 @@
+services:
+  octave:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - octave-data:/var/lib/octave/data
+    environment:
+      OCTAVE_MAX_UPLOAD_MB: "200"
+      OCTAVE_PREVIEW_SLICES: "128"
+    restart: unless-stopped
+volumes:
+  octave-data:
