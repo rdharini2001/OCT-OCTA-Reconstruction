@@ -14,12 +14,12 @@ import cv2
 import numpy as np
 from PIL import Image
 from scipy import ndimage as ndi
-from skimage.morphology import skeletonize, remove_small_objects
+from skimage.morphology import skeletonize
 from octa_pipeline.config import PipelineConfig
-from octa_pipeline import segmentation, projection, v2, v3, v3_fixed
+from octa_pipeline import segmentation, projection, v2, v3, v3_fixed, v5, ezc
 from .fast_segmentation import segment_fast
 
-LAYERS = {'structural': 'Structural reflectance', 'svc': 'Superficial vascular complex', 'dvc': 'Deep vascular complex', 'avc': 'Outer avascular retina', 'cc': 'Choriocapillaris', 'choroid': 'Choroidal proxy'}
+LAYERS = {'structural':'Structural OCT','svc':'SVC','dvc':'DVC','avc':'Avascular','cc':'Choriocapillaris','choroid':'Choroid'}
 
 
 def normalize(arr: np.ndarray) -> np.ndarray:
@@ -42,19 +42,48 @@ def png_bytes(gray: np.ndarray, palette: str = 'gray') -> bytes:
     return out.getvalue()
 
 
-def segment_and_project(structural: np.ndarray, flow: np.ndarray | None, folder: Path, fov_x_mm: float | None, fov_y_mm: float | None, axial_um_per_px: float | None, progress=None) -> dict:
+def segment_and_project(structural: np.ndarray, flow: np.ndarray | None, folder: Path, fov_x_mm: float | None, fov_y_mm: float | None, axial_um_per_px: float | None, progress=None, *, mode: str = 'v5-v6') -> dict:
+    """Use the supplied v5 reconstruction exactly, with additive v6 EZC+FAZ.
+
+    v5-v6: DP-based structural segmentation + v5 flow processing and enhancement.
+    preview: faster OCT-only intensity-boundary proxy with v5 flow processing;
+             NEVER presented as equivalent scientific quality.
+    """
     folder.mkdir(exist_ok=True, parents=True)
+    if mode not in ('v5-v6', 'preview'):
+        raise ValueError('Invalid reconstruction mode')
     cfg = PipelineConfig()
-    if progress: progress(0.16, 'Tracing retinal boundaries')
-    bounds = segmentation.segment_volume(structural, cfg.segmentation) if os.environ.get("OCTAVE_SEGMENTER") == "legacy" else segment_fast(structural)
+    v2cfg = v2.V2Config()
+    if progress: progress(.16, 'Segmenting anatomy · v5')
+    bounds = segmentation.segment_volume(structural, cfg.segmentation) if mode == 'v5-v6' else segment_fast(structural)
+    if progress: progress(.39, 'Tracing EZC · v6')
+    # EZC is an informational boundary in v6, not a substitution for v5 slabs.
+    ez = None
+    if mode == 'v5-v6':
+        try:
+            ez = ezc.detect_ezc_volume(structural, bounds, cfg.segmentation).astype(np.float32)
+        except (ValueError, IndexError) as e:
+            # EZC is optional and must not invalidate otherwise valid v5 slabs.
+            if progress: progress(.43, f'EZC unavailable ({type(e).__name__}); continuing v5')
     b = {name: getattr(bounds, name).astype(np.float32) for name in ('ilm', 'ipl_inl', 'opl_onl', 'rpe')}
-    np.savez_compressed(folder / 'boundaries.npz', **b)
-    if progress: progress(0.58, 'Reconstructing en face projections')
+    if ez is not None: b['ezc'] = ez
+    if progress: progress(.52, 'Reconstructing en face · v5')
     images = {'structural': normalize(structural.mean(axis=1))}
+    choroid_status = 'Not available without paired OCTA input'
+    choroid_fallback = None
     if flow is not None:
-        # Image-derived flow projection requires already-processed paired decorrelation data.
         slabs = projection.build_slabs(bounds, cfg.segmentation)
-        extra = v2.build_extra_slabs(bounds, structural.shape[1], v2.V2Config())
+        extra = v2.build_extra_slabs(bounds, structural.shape[1], v2cfg)
+        ch_mode = os.environ.get('OCTAVE_CHOROID', 'proxy').lower()
+        if ch_mode == 'choroidalyzer':
+            from .choroid_optional import model_boundaries
+            top, bottom, choroid_fallback = model_boundaries(structural,bounds.rpe,extra.choroid_top,extra.choroid_bottom)
+            choroid_status = 'Choroidalyzer segmented region with per-column fallback'
+        elif ch_mode == 'proxy':
+            top,bottom=extra.choroid_top,extra.choroid_bottom
+            choroid_status = 'RPE-offset proxy (not a choroid segmentation)'
+        else:
+            raise ValueError('OCTAVE_CHOROID must be proxy or choroidalyzer')
         flow_ds = projection.despeckle_flow(flow, cfg.projection.flow_median_ksize)
         bulk = projection.estimate_bulk_motion_floor(flow_ds, bounds.opl_onl, bounds.rpe, cfg.projection.bulk_motion_ref_margin)
         corrected = projection.suppress_bulk_motion(flow_ds, bulk, cfg.projection.bulk_motion_baseline_percentile)
@@ -62,34 +91,42 @@ def segment_and_project(structural: np.ndarray, flow: np.ndarray | None, folder:
         dvc = projection.suppress_projection_artifact_3d(corrected, slabs.svp_top, slabs.svp_bottom, slabs.dvp_top, slabs.dvp_bottom, cfg.projection.projection_artifact_suppression, cfg.projection.projection_artifact_decay_px)
         avc = v3.avascular_void(v3_fixed.median_projection(corrected, extra.avc_top, extra.avc_bottom))
         cc = projection._mean_projection(corrected, extra.cc_top, extra.cc_bottom)
-        # Note: offset proxy is intentionally labelled, not a segmented choroidal boundary.
-        choroid = projection._mean_projection(corrected, extra.choroid_top, extra.choroid_bottom)
-        images.update({'svc': normalize(v3.row_flat_field(svc)), 'dvc': normalize(v3.row_flat_field(dvc)), 'avc': normalize(avc), 'cc': normalize(cc), 'choroid': normalize(choroid)})
+        ch = projection._mean_projection(corrected, top, bottom)
+        images.update({
+            'svc': v2.enhance_v2(v3.row_flat_field(svc),v2cfg),
+            'dvc': v2.enhance_v2(v3.row_flat_field(dvc),v2cfg),
+            'avc': v5.avascular_display(avc),
+            'cc': v2.enhance_v2(v3.row_flat_field(cc),v2cfg),
+            'choroid': v2.enhance_v2(v3.row_flat_field(ch),v2cfg),
+        })
         del flow_ds, corrected
-    if progress: progress(0.87, 'Calculating quality controls')
+    if progress: progress(.85, 'Saving reproducible results')
     for name, image in images.items():
-        Image.fromarray(image).save(folder / f'{name}.png')
-    # Real data not packed into source tree, kept local only.
-    np.save(folder / 'structural.npy', structural)
+        Image.fromarray(image).save(folder/f'{name}.png')
+    np.savez_compressed(folder/'boundaries.npz', **b)
+    np.save(folder/'structural.npy',structural)
     mm = fov_x_mm is not None and fov_y_mm is not None
     qc = bounds.qc
-    warnings = []
-    if not mm: warnings.append('Physical lateral scan dimensions missing: FAZ area and vascular length cannot be reported in mm units.')
-    if axial_um_per_px is None: warnings.append('Axial calibration missing: retinal thickness is reported only in pixels.')
-    if bool(qc['any_flagged']): warnings.append('Boundary segmentation flagged for review. Inspect overlaid B-scans before trusting slab analysis.')
-    if flow is None: warnings.append('Structural-only mode: OCTA vessel density, FAZ and flow analysis are unavailable.')
-    else: warnings.append('Flow volume assumed to be co-registered decorrelation/OCTA input; it cannot be inferred from structural OCT.')
-    warnings.append('IPL/INL, OPL/ONL and choroidal estimates use geometric proxies in fast mode. Not validated tissue-class boundaries; research use only.')
+    warnings=[]
+    if not mm: warnings.append('Lateral calibration is unknown. FAZ area remains in px²; mm² is unavailable.')
+    if axial_um_per_px is None: warnings.append('Axial calibration is unknown. Thickness remains in pixels.')
+    if qc.get('any_flagged'): warnings.append('Boundary tracing requires manual QC before measuring anatomy.')
+    if flow is None: warnings.append('No paired OCTA flow input: vessel and FAZ analysis disabled.')
+    else: warnings.append('Flow volume registration cannot be established solely from matching array shapes.')
+    if mode == 'preview': warnings.append('Fast preview estimates inner layers geometrically. Do not use for final research measurements.')
+    else: warnings.append('OPL/ONL in the supplied v5 segmenter remains an estimated boundary; EZC is informational only.')
+    if flow is not None and choroid_fallback is not None: warnings.append(f'Choroidalyzer fallback used for {choroid_fallback:.1%} of columns.')
+    if flow is not None and choroid_fallback is None: warnings.append('Choroid and CC offsets are pixel-space proxies; inspect for device/protocol mismatch.')
     return {
-        'shape': list(structural.shape), 'flow_available': flow is not None, 'layers': list(images),
-        'fovea_seed': estimate_fovea_seed(b['ilm'],b['rpe']),
-        'calibration': {'fov_x_mm': fov_x_mm, 'fov_y_mm': fov_y_mm, 'axial_um_per_px': axial_um_per_px},
-        'retinal_thickness_px': round(float(np.median(bounds.rpe - bounds.ilm)), 1),
-        'retinal_thickness_um': round(float(np.median(bounds.rpe - bounds.ilm) * axial_um_per_px), 1) if axial_um_per_px else None,
-        'qc': qc, 'warnings': warnings,
-        'pipeline': 'Fast vectorized heuristic boundaries (legacy DP optional) + user-provided octa_pipeline projection algorithms; OCTAVE v0.1',
+        'shape':list(structural.shape),'flow_available':flow is not None,'layers':list(images),
+        'fovea_seed':estimate_fovea_seed(b['ilm'],b['rpe']),
+        'calibration':{'fov_x_mm':fov_x_mm,'fov_y_mm':fov_y_mm,'axial_um_per_px':axial_um_per_px},
+        'retinal_thickness_px':round(float(np.median(bounds.rpe-bounds.ilm)),1),
+        'retinal_thickness_um':round(float(np.median(bounds.rpe-bounds.ilm)*axial_um_per_px),1) if axial_um_per_px else None,
+        'qc':qc,'warnings':warnings,'choroid_boundary':choroid_status,
+        'choroid_fallback_fraction':round(choroid_fallback,4) if choroid_fallback is not None else None,
+        'pipeline_mode':mode,'pipeline':'Original supplied v5 projection + enhancement; v5 DP segmenter and additive v6 EZC/QC + FAZ' if mode=='v5-v6' else 'Explicit fast exploratory preview + supplied v5 projections',
     }
-
 
 def estimate_fovea_seed(ilm: np.ndarray, rpe: np.ndarray) -> dict:
     """Thickness-minimum seed as in user-provided seg_v6_faz, with center fallback."""
@@ -116,11 +153,16 @@ def vessel_and_faz(image: np.ndarray, threshold: int = 52, seed_x: int | None = 
     h, w = image.shape
     # Positive vessel structure above percentile of contrast-enhanced view.
     # This is not a calibrated biological flow threshold.
-    nonzero = image[image > 0]
-    cut = np.percentile(nonzero, threshold) if nonzero.size else 255
-    vessel = (image >= cut) & (image > 0)
+    # Use the entire image distribution and a *strict* threshold. v5
+    # midtone lift often places most background pixels at exactly 60;
+    # a >= 52nd-percentile test would incorrectly mark ~100% as vessels.
+    cut = np.percentile(image, threshold) if image.size else 255
+    vessel = (image > cut) & (image > 0)
     vessel = ndi.binary_opening(vessel, structure=np.ones((2, 2)))
-    vessel = remove_small_objects(vessel, min_size=4)
+    labels, count = ndi.label(vessel)
+    if count:
+        sizes = np.bincount(labels.ravel())
+        vessel &= (sizes[labels] >= 4) & (labels != 0)
     y = h // 2 if seed_y is None else int(seed_y)
     x = w // 2 if seed_x is None else int(seed_x)
     if not (0 <= x < w and 0 <= y < h):
@@ -166,8 +208,42 @@ def vessel_and_faz(image: np.ndarray, threshold: int = 52, seed_x: int | None = 
         'row_density_pct': row_density, 'calibrated': calibrated,
         'method_note': 'Displayed en face image percentile threshold + morphology. Skeleton length is a pixel-path proxy. No clinical validation.',
     }
+    metrics.update(svc_morphometry(vessel,component) if detected else svc_morphometry(vessel,np.zeros_like(component)))
     return metrics, vessel, component
 
+
+def svc_morphometry(vessel: np.ndarray, faz: np.ndarray) -> dict:
+    """Pixel-space exploratory features adapted from uploaded v6 morphometry.
+
+    Derived from the currently thresholded mask, not a pretrained vessel model.
+    """
+    from scipy.ndimage import convolve
+    skel = skeletonize(vessel)
+    nbr = convolve(skel.astype(np.uint8),np.array([[1,1,1],[1,0,1],[1,1,1]],dtype=np.uint8),mode='constant')
+    h,w=vessel.shape
+    a=max(int(skel.sum()),1)
+    area=int(faz.sum())
+    per=None
+    if area:
+        contours,_=cv2.findContours(faz.astype('uint8'),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_NONE)
+        per=max((cv2.arcLength(c,True) for c in contours),default=0.0)
+    out={
+        'skeleton_density_per_1k_px':round(1000*float(skel.mean()),3),
+        'mean_caliber_px_proxy':round(float(vessel.sum())/a,3),
+        'branchpoint_density_per_10k_px':round(10000*float((skel & (nbr>=3)).mean()),3),
+        'endpoint_density_per_10k_px':round(10000*float((skel & (nbr==1)).mean()),3),
+        'faz_acircularity':round(float(per/(2*np.sqrt(np.pi*area))),3) if per and area else None,
+    }
+    # Same bounded, box-counting approximation as user-supplied v6 script.
+    sizes=(2,3,4,6,8,12,16,24,32)
+    entries=[]
+    for size in sizes:
+        if size>=min(h,w):continue
+        nr,nc=h//size,w//size
+        count=skel[:nr*size,:nc*size].reshape(nr,size,nc,size).any(axis=(1,3)).sum()
+        if count>0:entries.append((size,count))
+    out['fractal_dimension']=round(float(np.polyfit(np.log([1/i for i,_ in entries]),np.log([c for _,c in entries]),1)[0]),4) if len(entries)>=3 else None
+    return out
 
 def metrics_overlay(image: np.ndarray, vessel: np.ndarray, faz: np.ndarray, x: int, y: int) -> bytes:
     rgb = np.array(Image.fromarray(image.astype(np.uint8)).convert('RGB'))

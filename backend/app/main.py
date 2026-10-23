@@ -23,23 +23,18 @@ from pydantic import BaseModel
 
 from .io import load_volume, DataError
 from .analysis import segment_and_project, vessel_and_faz, metrics_overlay, png_bytes, png_bytes_rgb, LAYERS
-from .demo import create_demo
 
 DATA_ROOT = Path(os.environ.get('OCTAVE_DATA_DIR',str(Path(__file__).resolve().parents[2]/'runtime-data'))).resolve()
 DATA_ROOT.mkdir(parents=True,exist_ok=True)
 MAX_UPLOAD_MB = int(os.environ.get('OCTAVE_MAX_UPLOAD_MB','200'))
-MAX_SLICES = int(os.environ.get('OCTAVE_PREVIEW_SLICES','128'))
+MAX_SLICES = int(os.environ.get('OCTAVE_PREVIEW_SLICES','0'))
 executor=ThreadPoolExecutor(max_workers=1)
 jobs: dict[str,dict] = {}
 job_lock=threading.Lock()
 
-app=FastAPI(title='OCTAVE Research API',version='0.1.0',description='Local, research-only OCT/OCTA processing and visualization. Not a medical device.')
+app=FastAPI(title='OCTAVE Research API',version='0.2.0',description='Local, research-only OCT/OCTA processing and visualization. Not a medical device.')
 app.add_middleware(CORSMiddleware,allow_origins=['http://localhost:5173','http://127.0.0.1:5173'],allow_credentials=False,allow_methods=['*'],allow_headers=['*'])
 
-
-@app.on_event('startup')
-def startup():
-    create_demo(DATA_ROOT)
 
 
 def dataset_dir(dataset_id: str) -> Path:
@@ -60,7 +55,7 @@ def update_job(job_id: str, **kw):
         jobs[job_id].update(kw)
 
 
-def work(job_id: str, dataset_id: str, source: str, structural_path: Path, flow_path: Path | None, x_mm: float | None, y_mm: float | None, z_um: float | None, sample_limit: int):
+def work(job_id: str, dataset_id: str, source: str, structural_path: Path, flow_path: Path | None, x_mm: float | None, y_mm: float | None, z_um: float | None, sample_limit: int, mode: str):
     folder=DATA_ROOT/dataset_id
     def progress(value: float,msg: str): update_job(job_id,progress=round(value,3),stage=msg)
     try:
@@ -73,12 +68,12 @@ def work(job_id: str, dataset_id: str, source: str, structural_path: Path, flow_
         if f is not None and (s.shape != f.shape or orig_n != flow_n):
             raise DataError(f'Structural {s.shape} ({orig_n} source frames) and flow {f.shape} ({flow_n} source frames) differ. Use a registered, paired volume.')
         progress(.12,'Running reconstruction pipeline')
-        result=segment_and_project(s,f,folder,x_mm,y_mm,z_um,progress)
+        result=segment_and_project(s,f,folder,x_mm,y_mm,z_um,progress,mode=mode)
         meta={
             'id':dataset_id,'name':source[:120], 'created_at':datetime.now(timezone.utc).isoformat(),
             'source':'User-uploaded local OCT volume','synthetic':False,'status':'ready',
             'original_slices':int(orig_n),'sampled_slices':int(s.shape[0]), 'preview_sampling':orig_n!=s.shape[0],
-            'provenance':{'input_hashes':input_hashes,'sampling_max_slices':sample_limit,'version':'0.1.0','app':'OCTAVE'},
+            'provenance':{'input_hashes':input_hashes,'sampling_max_slices':sample_limit,'version':'0.2.0','app':'OCTAVE'},
             **result,
         }
         if meta['preview_sampling']:
@@ -113,7 +108,7 @@ async def save_upload(f: UploadFile, out: Path):
 
 
 @app.get('/api/health')
-def health(): return {'status':'ok','service':'OCTAVE','version':'0.1.0','disclaimer':'Research use only'}
+def health(): return {'status':'ok','service':'OCTAVE','version':'0.2.0','disclaimer':'Research use only'}
 
 
 @app.get('/api/datasets')
@@ -129,8 +124,9 @@ def get_datasets():
 async def create_dataset(
     structural:UploadFile=File(...),flow:UploadFile|None=File(None),
     name:str=Form('New OCT volume'),fov_x_mm:float|None=Form(None),fov_y_mm:float|None=Form(None),
-    axial_um_per_px:float|None=Form(None),max_slices:int=Form(MAX_SLICES)
+    axial_um_per_px:float|None=Form(None),max_slices:int=Form(MAX_SLICES), mode:str=Form('v5-v6')
 ):
+    if mode not in ('v5-v6','preview'): raise HTTPException(422,'mode must be v5-v6 or preview')
     if (fov_x_mm is None)!=(fov_y_mm is None):
         raise HTTPException(422,'Provide both lateral scan widths or neither')
     if any(v is not None and not (0<v<=60) for v in (fov_x_mm,fov_y_mm)):
@@ -153,7 +149,7 @@ async def create_dataset(
     job_id=uuid4().hex
     with job_lock:
         jobs[job_id]={'id':job_id,'dataset_id':id,'status':'processing','stage':'Queued','progress':0}
-    executor.submit(work,job_id,id,name,sp,fp,fov_x_mm,fov_y_mm,axial_um_per_px,max_slices)
+    executor.submit(work,job_id,id,name,sp,fp,fov_x_mm,fov_y_mm,axial_um_per_px,max_slices,mode)
     return jobs[job_id]
 
 
@@ -175,7 +171,7 @@ def bscan(dataset_id:str,index:int,overlay:bool=Query(True)):
     raw=volume[index]
     if not overlay: return Response(content=png_bytes(raw),media_type='image/png')
     rgb=np.stack([raw,raw,raw],axis=2).copy()
-    colors={'ilm':(255,125,134),'ipl_inl':(255,206,120),'opl_onl':(67,229,201),'rpe':(148,143,255),'ezc':(117,165,250)}
+    colors={'ilm':(254,112,137),'ipl_inl':(249,187,110),'opl_onl':(98,225,202),'ezc':(182,147,244),'rpe':(140,222,167)}
     with np.load(d/'boundaries.npz') as bd:
         for key,color in colors.items():
             if key not in bd: continue
@@ -208,6 +204,8 @@ def analyze(dataset_id:str,layer:str='svc',threshold:int=52,seed_x:int|None=None
         for k in list(metrics):
             if k.startswith('faz_') or k=='closing_radius_px': metrics.pop(k,None)
         faz[:]=False
+    if layer!='svc':
+        for key in ('faz_acircularity',): metrics.pop(key,None)
     metrics['layer']=layer
     return metrics
 
@@ -231,7 +229,7 @@ def surface(dataset_id:str,step:int=5):
     d=dataset_dir(dataset_id)
     if not 1<=step<=24:raise HTTPException(422,'step must be in 1..24')
     with np.load(d/'boundaries.npz') as b:
-        return {'step':step,'layers':{key:np.rint(b[key][::step,::step]).astype(int).tolist() for key in ('ilm','ipl_inl','opl_onl','rpe')},'dimensions':read_dataset(dataset_id)['shape']}
+        return {'step':step,'layers':{key:np.rint(b[key][::step,::step]).astype(int).tolist() for key in ('ilm','ipl_inl','opl_onl','ezc','rpe') if key in b},'dimensions':read_dataset(dataset_id)['shape']}
 
 
 @app.get('/api/datasets/{dataset_id}/export')
@@ -251,7 +249,7 @@ def export(dataset_id:str,threshold:int=52,seed_x:int|None=None,seed_y:int|None=
                 img=np.array(Image.open(d/f'{layer}.png').convert('L'))
                 metric,vessel,faz=vessel_and_faz(img,threshold,seed_x,seed_y,fov_x_mm=meta['calibration']['fov_x_mm'],fov_y_mm=meta['calibration']['fov_y_mm'])
                 if layer=='svc':z.writestr('images/svc_vessel_faz_overlay.png',metrics_overlay(img,vessel,faz,metric['faz_seed']['x'],metric['faz_seed']['y']))
-                rows.append({'layer':layer,'vessel_density_pct':metric['vessel_density_pct'],'faz_detected':metric['faz_detected'] if layer=='svc' else '', 'faz_area_px':metric['faz_area_px'] if layer=='svc' else '', 'faz_area_mm2':metric['faz_area_mm2'] if layer=='svc' else ''})
+                rows.append({'layer':layer,'vessel_density_pct':metric['vessel_density_pct'],'faz_detected':metric['faz_detected'] if layer=='svc' else '', 'faz_area_px':metric['faz_area_px'] if layer=='svc' else '', 'faz_area_mm2':metric['faz_area_mm2'] if layer=='svc' else '', 'fractal_dimension':metric.get('fractal_dimension'), 'mean_caliber_px_proxy':metric.get('mean_caliber_px_proxy')})
             csv_io=io.StringIO();writer=csv.DictWriter(csv_io,fieldnames=list(rows[0]));writer.writeheader();writer.writerows(rows)
             z.writestr('vascular_metrics.csv',csv_io.getvalue())
         for layer in meta['layers']:z.write(d/f'{layer}.png',f'images/{layer}.png')

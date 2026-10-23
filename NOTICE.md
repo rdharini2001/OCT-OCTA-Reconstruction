@@ -1,9 +1,5 @@
-# Source provenance and license notices
+# Attribution and research limitations
 
-- The OCTAVE frontend, FastAPI glue, synthetic phantom, adapters, tests, scripts, documentation, and new experimental segmentation helper were created for this project and are made available under `LICENSE` (MIT).
-- `backend/octa_pipeline/` was taken from the user's uploaded `octa_pipeline (2).zip`. It contains user-supplied reconstruction research code. Its uploaded copy did not include an explicit license. It is included to preserve functional compatibility with the user's work, **not** because it was independently proven eligible for public redistribution. Confirm permission before pushing this repository publicly; you may need to keep it private.
-- The uploaded FAZ script inspired seeded, enclosed non-vessel component detection. The application implementation of that approach is in `backend/app/analysis.py`; the original FAZ repository is not bundled.
-- `Choroidalyzer` and `OCTolyzer` are separate projects, not included in the app. There are no bundled trained weights or externally sourced patient images. The term “Choroidalyzer” in documentation means potential/optional integration only, not a claim that its segmenter is active.
-- The included synthetic data generator and preview screenshots are simulated research visualizations and **not** evidence of OCTA reconstruction accuracy.
+OCTAVE UI and API wrapper code was written for this repository. The `backend/octa_pipeline/` module and `research/reference-scripts/` are user-supplied research code. They have not been relicensed by this project; confirm redistribution and any third-party obligations before publishing publicly. Choroidalyzer and OCTolyzer are named as references but not bundled. No pretrained Choroidalyzer or OCTA-autosegmentation weights are included. No user imaging datasets or simulated OCT/OCTA subjects are included.
 
-This is research software. Neither the packaging license nor visual design constitutes clinical clearance, measurement accuracy certification, or permission to redistribute restricted clinical data.
+Software is exploratory, not certified, and not for diagnosis or treatment. See README and docs/VALIDATION.md for limitations.

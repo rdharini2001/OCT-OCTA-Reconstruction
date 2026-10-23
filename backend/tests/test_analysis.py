@@ -48,3 +48,12 @@ def test_no_calibration_means_no_physical_units():
     m,_,_=vessel_and_faz(np.zeros((100,100),np.uint8))
     assert m['faz_area_mm2'] is None
     assert m['vessel_length_mm_proxy'] is None
+
+
+def test_v5_tied_background_is_not_marked_all_vessel():
+    img = np.full((100, 100), 60, dtype=np.uint8)
+    img[30:70, 20:75] = 95
+    metrics, vessel, _ = vessel_and_faz(img, threshold=52)
+    assert 0 < metrics['vessel_density_pct'] < 50
+    assert not vessel[0, 0]
+

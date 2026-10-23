@@ -7,7 +7,7 @@ services:
       - octave-data:/var/lib/octave/data
     environment:
       OCTAVE_MAX_UPLOAD_MB: "200"
-      OCTAVE_PREVIEW_SLICES: "128"
+      OCTAVE_PREVIEW_SLICES: "0"
     restart: unless-stopped
 volumes:
   octave-data:

@@ -1,5 +1,3 @@
 # Contributing
 
-Please keep algorithmic provenance explicit and preserve the distinction between structural OCT reflectance and OCTA flow signal. Never add identifiable patient images or proprietary pretrained weights to this repository. Add tests for new data adapters, expected physical units and FAZ non-detection. Provide device/pathology-specific accuracy evidence before claiming an analysis method is validated.
-
-For local development, see README.md. Open contributions targeting typed metadata adapters, annotation correction, uncertainty intervals, scan registration checks and publishable measurement validation.
+The UI source is `frontend/src/app.js` and `frontend/src/styles.css`; build with `cd frontend && npm run check`, without installing dependencies. The backend is in `backend/app`, with the original supplied v5 pipeline in `backend/octa_pipeline`. Run `cd backend && python -m pytest -q` before submitting changes. Never commit patient data, model weights without redistribution permission, unverified mm measurements or screenshots derived from identifiable scans. Document calibration, QC and the source of each algorithm change.

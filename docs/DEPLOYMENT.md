@@ -1,7 +1,11 @@
-# Safe deployment notes
+# Deploying OCTAVE
 
-Use `docker compose up --build` locally or run the FastAPI server on loopback. By design this repository does **not** expose public endpoints with authentication/authorization. Do not upload identifiable patient data on a shared server without an approved research data-handling protocol.
+**Recommended environment:** local machine, institutional private workstation or VPN-protected host. The API has no authentication, authorization or audit log and is **not safe as a public upload endpoint**.
 
-`OCTAVE_DATA_DIR` sets the directory for user-derived outputs. Never commit its contents. `OCTAVE_MAX_UPLOAD_MB` sets per-file upload limits (default 200). `OCTAVE_PREVIEW_SLICES` controls default preview sampling (128). `OCTAVE_SEGMENTER=legacy` selects the slower source-traced dynamic-programming boundary method.
+1. `cd backend && python -m pip install -r requirements.txt`.
+2. `uvicorn app.main:app --host 127.0.0.1 --port 8000`.
+3. Open `http://127.0.0.1:8000` and import a study.
 
-The default inline background worker is in-process and job states do not persist across restarts. For hosted work, move to a durable task queue, authenticated user-scoped datasets, encrypted at-rest storage, virus/malware scans, per-tenant quotas, reverse-proxy request size limits and observability.
+A ready frontend is committed under `frontend/dist/`. To update it: `cd frontend && npm run check`. No npm install or React build is needed. Docker Compose: `docker compose up --build`, bound to `127.0.0.1:8000` by default.
+
+Set `OCTAVE_DATA_DIR` to a private writable disk location with sufficient capacity. Full OCT/flow processing can consume substantial RAM. The server currently uses a single in-process worker queue and job status is lost if the server restarts; implement durable workers and cleanup/deletion policies before production use. Configure de-identification, TLS, authentication, upload scanning, retention and disk quotas before collaboration over a network. Back up original inputs separately; the app deletes the uploaded archives after conversion.

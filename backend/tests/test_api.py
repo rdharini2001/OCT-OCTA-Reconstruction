@@ -1,20 +1,19 @@
 import os
+from pathlib import Path
 from fastapi.testclient import TestClient
 from app.main import app
 
+def test_api_empty_library_without_demo(monkeypatch,tmp_path):
+    import app.main as main
+    monkeypatch.setattr(main,'DATA_ROOT',tmp_path)
+    with TestClient(app) as client:
+        assert client.get('/api/health').json()['version']=='0.2.0'
+        assert client.get('/api/datasets').json()==[]
+        assert client.get('/api/datasets/synthetic-demo').status_code==404
+        assert client.get('/').status_code==200
+        assert client.get('/api/datasets/../../etc/passwd').status_code in (400,404)
 
-def test_api_health_and_demo(tmp_path):
-    with TestClient(app) as c:
-        assert c.get('/api/health').status_code==200
-        datasets=c.get('/api/datasets').json()
-        assert any(d['id']=='synthetic-demo' for d in datasets)
-        r=c.get('/api/datasets/synthetic-demo/bscan/50')
-        assert r.status_code==200 and r.headers['content-type']=='image/png'
-        r=c.get('/api/datasets/synthetic-demo/enface/svc')
-        assert r.status_code==200
-        r=c.get('/api/datasets/synthetic-demo/analyze/svc')
-        assert r.status_code==200 and 'faz_detected' in r.json()
-        assert c.get('/api/datasets/synthetic-demo/surface?step=8').status_code==200
-        assert c.get('/api/datasets/synthetic-demo/export').status_code==200
-        assert c.get('/api/datasets/synthetic-demo/bscan/999').status_code==404
-        assert c.get('/api/datasets/../../etc/passwd').status_code in (400,404)
+def test_invalid_pipeline_mode_rejected(tmp_path):
+    with TestClient(app) as client:
+        r=client.post('/api/datasets',data={'mode':'fictional'})
+        assert r.status_code==422

@@ -1,0 +1,15 @@
+.git/
+**/__pycache__/
+**/.pytest_cache/
+**/.venv/
+**/node_modules/
+runtime-data/
+backend/runtime-data/
+*.npy
+*.npz
+*.dcm
+*.vol
+*.e2e
+OctDenoise*.zip
+Flow-*.zip
+*.log

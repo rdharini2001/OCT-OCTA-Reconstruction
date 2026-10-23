@@ -7,7 +7,7 @@ This project is a runnable **research scaffold**, not an FDA/CE-cleared medical 
 - [ ] Record vendor, model, serial/firmware, scan protocol, slab definitions, repeated B-scan protocol, physical calibration and eye laterality.
 - [ ] Confirm B-scan order, direction, registration and image orientation; repeated OCT B-scans are not equivalent to a registered flow volume.
 - [ ] Validate ILM, IPL/INL, OPL/ONL and RPE boundaries with masked expert annotations across normal eyes and pathology.
-- [ ] Replace geometric IPL/INL, OPL/ONL and choroidal proxies with modality-trained boundaries and document model-domain limits.
+- [ ] Validate estimated OPL/ONL and choroid proxies and consider modality-trained boundaries and document model-domain limits.
 - [ ] Quantify FAZ segmentation Dice/IoU, area absolute error (mm²), centroid distance, failure rate and inter-rater variability; never silently omit non-detections.
 - [ ] Evaluate SVC and DVC slab contamination, residual superficial projection artifacts, banding, shadow attenuation and nonperfusion false positives.
 - [ ] Evaluate spatial calibration and uncertainty after any resizing or decimation. Preview mode should never be pooled as quantitative full-data measurements.
@@ -28,7 +28,7 @@ This project is a runnable **research scaffold**, not an FDA/CE-cleared medical 
 ## Methodological non-claims
 
 - The current default projection is **not** a calibrated OCTA decorrelation reconstruction from raw interference data.
-- The outer retina/choroid panels are **experimental proxy slabs**, not validated anatomical segmentation.
+- The supplied v5 outer retinal/choroid slabs are **experimental proxy slabs**, not validated anatomical segmentation.
 - A measured OCTA signal does not itself give absolute blood-flow velocity.
 - A passed QC status only means the implemented heuristics did not flag the scan.
 - FAZ area in pixels cannot be converted to mm² without verified lateral acquisition dimensions.

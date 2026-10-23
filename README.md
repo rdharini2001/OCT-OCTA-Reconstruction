@@ -1,42 +1,60 @@
-# OCTAVE — Retinal Research Studio
+# OCTAVE
 
-**Open, interactive structural OCT + paired OCTA reconstruction, vascular mapping and FAZ exploration.**
+**Minimal OCT/OCTA reconstruction, FAZ analysis & retinal imaging workstation.**
 
-![OCTAVE multimodal research workspace](docs/screenshots/workspace.png)
+![Actual OCTAVE interface, empty library](docs/preview-empty.png)
 
-*Explore anatomy and vascular signal in a linked 2D research workspace. [View the interactive 3D retinal-surface preview](docs/screenshots/retinal-surfaces.png).*
+> **Research use only. Not clinically validated.** OCTA vessel analysis requires a **separate, registered, real flow/decorrelation volume**; blood flow cannot be recovered from an ordinary structural OCT scan. No sample/patient data, synthetic cases, or external UI assets are included.
 
-A polished full-stack research environment inspired by the transparency of [OCTolyzer](https://github.com/jaburke166/OCTolyzer) and the choroidal analysis goals of [Choroidalyzer](https://github.com/justinengelmann/Choroidalyzer). This is a **research prototype**, **not a medical device**, and its quantitative metrics have **not been clinically validated**.
+## What's new in 0.2
 
-> **Physiology matters:** structural OCT scans **do not encode measured blood flow**. OCTAVE can always visualize structural OCT and geometric retinal boundaries. To compute vessel masks, FAZ and depth-resolved OCTA maps, you must supply a **registered flow/decorrelation OCTA volume** separately. No synthetic vascular output is misrepresented as a measured OCTA reconstruction.
+- Complete visual redesign: clean, dark imaging workstation; reduced labels and decorative content; responsive navigation; real data views only.
+- The **uploaded v5 reconstruction** now runs by default, not the former fast approximation. Includes dynamic-programming anatomy, bulk-motion correction, projection suppression, SVC/DVC/avascular/CC/choroid projections, and v5 Frangi/CLAHE enhancement.
+- **v6 additions:** informational EZC surface in B-scan overlays and interactive 3D, supplied FAZ v2 enclosed-void logic, and exploratory SVC morphometry (skeleton density, caliber proxy, branch endpoints, fractal dimension, FAZ acircularity).
+- Optional `OCTAVE_CHOROID=choroidalyzer` switches the choroid slab to trained choroidal boundaries, **only if independently installed and supplied with functioning model weights**. Default v5 choroid projection is plainly labeled as an RPE-offset proxy.
+- Corrected percentile vessel mask behavior when v5 display enhancement creates a dominant flat background intensity.
+- Eliminated synthetic demo creation and removed the old unverified React dependency path. Frontend is now **one maintained, dependency-free JavaScript/CSS codebase**; CI builds it reproducibly using Node built-ins only.
 
-## Run right now (offline-capable UI)
+## Run locally
 
-Requires Python 3.11+ and dependencies (installation may require internet **once**):
+Python **3.11+** (prefer Python 3.11 for consistency with CI):
 
 ```bash
 cd backend
 python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
+python -m pip install -r requirements.txt
+uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Open **http://127.0.0.1:8000**. The repository contains an immediately served **dependency-free browser build** in `frontend/dist/` (HTML/CSS/JavaScript), so you do **not** need Node to launch the interactive website. It comes with a deterministic **synthetic retinal phantom** clearly labeled as simulated data. Patient files are not bundled or uploaded anywhere by this application.
+Open **http://127.0.0.1:8000**. The **ready-made** `frontend/dist/` is served by FastAPI. Node is *not required* to run the application. Processing and derived scans stay in the local `runtime-data/` directory, which is Git-ignored. The application starts **empty** and requests your own structural images.
 
-### Develop the React/TypeScript app
+### Import a study
 
-A more extensible React/Vite interface is maintained in `frontend/src/`, featuring Recharts density profiles, Three.js surface rendering and motion effects:
+1. Choose **Import scan** and a ZIP containing numbered `.png` / `.tif` / `.tiff` B-scans, or a 3-D `.npy`, `.npz`, or TIFF volume.
+2. Optionally add a **paired OCTA flow/decorrelation volume**. Same array shape is required, but this does **not** prove registration. The flow input must be truly acquired/derived, not simulated from structural OCT.
+3. Use default **v5 reconstruction + v6 analysis**. Choose **Full volume** for final research evaluations. Only choose **Fast exploratory preview** if deliberately trading boundary fidelity for speed.
+4. Enter lateral scan width and height (mm) **only from verified acquisition metadata**. Enter axial scale (µm/px) only if verified. Otherwise the site reports pixel units.
+5. Review the B-scan overlays, switch SVC/DVC/AVC/CC/choroid layers, adjust vessel threshold, click **FAZ seed** and then click the SVC image, explore 3D surfaces, and export analysis ZIPs.
+
+**Axes:** input array shape `(B-scan index, depth, A-scan width)`. The software does not infer vendor-specific axes or correct orientation. ZIP names sort numerically. For pathologies, different scanners, and unusual image dimensions, the v5 segmenter may fail or produce inaccurate boundaries; **manual review and expert validation remain essential**.
+
+### Website source and frontend CI
 
 ```bash
-# Terminal 1 (API)
-cd backend && uvicorn app.main:app --reload --port 8000
-# Terminal 2 (frontend source)
-cd frontend && npm install && npm run dev
-# open http://localhost:5173
+cd frontend
+npm run check        # JavaScript syntax, built-in tests, reproducible build
 ```
 
-`npm run build` compiles the React version into `frontend/dist/`, replacing the bundled standalone frontend. **The React build requires installing npm dependencies.** In the authoring environment, npm registry access was unavailable, so the React production build was *not independently verified there*. The bundled no-build interface is the tested Python-served entrypoint.
+There is no npm installation step, lockfile, CDN, or runtime framework. Edit `frontend/src/app.js` and `frontend/src/styles.css` and use `npm run build` to refresh `frontend/dist/`. This intentionally replaces the two competing React and bundled interfaces in the previous release that could diverge.
+
+### Backend tests
+
+```bash
+cd backend
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+```
 
 ### Docker
 
@@ -45,118 +63,40 @@ docker compose up --build
 # http://127.0.0.1:8000
 ```
 
-The Compose configuration binds only to loopback and persists derived data in a local named volume. **Do not expose the API to the public internet** without authentication, HTTPS, access controls, retention policies, malware scanning, rate limits and security review.
+## Core workflow
 
-## What is implemented
+| Capability | Implementation | Important caveat |
+| --- | --- | --- |
+| Structural B-scans | ZIP/NPY/NPZ/TIFF stack, linked view | Single B-scan is not a volume; vendor DICOM/OCT `.vol` adapters not included |
+| V5 retinal boundaries | Original uploaded dynamic-programming segmentation | OPL/ONL remains estimated; device/generalization not validated |
+| EZC (v6) | Additional image-derived band | Informational; does not replace original v5 slab bounds |
+| OCTA slabs | Supplied v5 algorithms + enhancement | Requires paired, already calculated flow/OCTA volume |
+| Choroid | v5 RPE-offset projection; optional Choroidalyzer | Real model weights and installation not bundled |
+| FAZ | v6 enclosed non-vessel region near foveal seed | Non-detection is not zero area; thresholded exploratory vessel mask, *not* external trained mask |
+| Morphometry | SVC skeleton, endpoints, fractal, caliber proxy | Exploratory pixel-space measurements unless verified calibration; not independently validated |
+| Three-dimensional view | Draggable 3D mesh of OCT boundary heightfields | Retinal tissue surfaces, not true OCTA microvessel 3D structure |
+| Exports | ZIP, PNG, boundaries, JSON and CSV | Includes pipeline/QC flags/input hashes but not the original source images |
 
-| Capability | Status | Interpretation |
-|---|---|---|
-| Multi-study local dataset library | Working | Synthetic demo + imported data; local server filesystem |
-| Import arbitrary numbered B-scans | Working | PNG/TIFF ZIP stacks, `.npy`, `.npz`, multipage TIFF; shape `(scan,depth,width)` |
-| Matched OCT and flow volumes | Working | Identical dimensions required; rejects mismatches |
-| OCT structural en face | Working | Depth-mean reflectance, **not** blood flow |
-| SVC / DVC / avascular / CC / choroid projections | Working with paired flow | Flow-input projections using the supplied OCTA algorithms; some slab boundaries remain proxies |
-| Linked en face/B-scan viewer | Working | Layer tabs, B-scan slider, boundary overlay, brightness and zoom |
-| Vessel density and length proxy | Exploratory | Image threshold and skeletonized pixel path, not absolute perfusion or true vessel length |
-| FAZ mapping | Exploratory | Seeded enclosed non-vessel region; no false zero result for failed detection |
-| FAZ seed relocation | Working | Click the SVC en face map to reposition seed |
-| Physical scale | Conditional | FAZ mm² requires both lateral scan dimensions; thickness µm needs axial calibration |
-| Retinal surface 3D viewer | Working | Geometric **retinal-layer surfaces**, not a reconstructed capillary graph |
-| Quality controls | Working | Basic boundary jumps/plausibility, sampling warnings and provenance |
-| Export | Working | ZIP of images, boundaries, metadata, CSV metrics, settings and FAZ overlay |
-| DICOM / vendor `.vol` | Not built in | Requires a format-specific adapter with reliable physical calibration |
-| Trained choroid segmentation | Optional future integration | No weights bundled; current choroid slab uses offset proxies |
-| Clinical accuracy | **Not established** | Must validate by scanner type, pathology and annotation |
+**Caution:** The v6 scripts supplied with this repository relied on an externally generated `svc_vessels_model.png` mask and on five numbered cases. The generalized API cannot claim identical externally validated segmentation because those model weights/checkpoints were not present. It derives an adjustable threshold-based exploratory mask from the v5 SVC reconstruction instead, while preserving the FAZ geometric procedure.
 
-## Use with the supplied datasets
+## Modes and environment
 
-The uploaded demonstration study included five pairs of archives `OctDenoise-1.zip` through `OctDenoise-5.zip` and `Flow-1.zip` through `Flow-5.zip`. Each archive has 448 B-scan frames of 1024 × 448 pixels. To load one, select **New analysis**, upload `OctDenoise-1.zip` as *Structural OCT* and `Flow-1.zip` as *Paired flow/OCTA*.
+- Default: `mode=v5-v6` (slow but uses provided v5 DP segmenter, v5 displays, and informational v6 EZC).
+- Alternate: `mode=preview` (faster intensity-driven boundaries; **not** equivalent or validated).
+- `OCTAVE_CHOROID=proxy` (default) or `OCTAVE_CHOROID=choroidalyzer` (requires independent installation and pretrained weights; fails explicitly if unavailable).
+- `OCTAVE_MAX_UPLOAD_MB=200` per input, `OCTAVE_DATA_DIR=/safe/local/path`, `OCTAVE_PREVIEW_SLICES=0` (full by default for API clients).
 
-The app **does not** ship any of these data archives. This is intentional: uploaded clinical/research images may contain personal or proprietary information.
+A computationally expensive full 448-frame example was **not successfully benchmarked in this environment**; the full mode may take significantly longer and need more memory than the sampled preview. For reliable large-volume batch processing, dedicated background workers, hardware profiling, and device-specific QC are still required.
 
-### Exact acquisition metadata
+## API
 
-Provide FOV width and FOV height **only when verified** from the scanner's metadata. If you don't know them, leave blank. `FAZ area = pixel area × (FOV width / image width) × (FOV height / image height)` is computed only with both dimensions available. Do **not** default to a presumed 3×3 mm scan. Axial µm/pixel is likewise required for thickness in physical units.
+`GET /api/health`, `GET /api/datasets`, `POST /api/datasets`, `GET /api/jobs/{id}`, `GET /api/datasets/{id}/bscan/{index}`, `GET /api/datasets/{id}/enface/{layer}`, `GET /api/datasets/{id}/analyze/{layer}`, `GET /api/datasets/{id}/mask/{layer}`, `GET /api/datasets/{id}/surface`, `GET /api/datasets/{id}/export`. Swagger UI at `/docs`.
 
-The default import option uses **up to 128 B-scans** for a responsive preview. For ZIP image stacks, preview sampling decodes only the selected frames; the full source volume is not loaded into memory first. It is explicitly flagged when it samples the stack. For prospective quantitative research, select **Full resolution**, after confirming hardware capacity; process time and memory usage grow with scan dimensions. Note that source volumes must already have matching orientation, scan order and registration; matching shapes alone cannot prove registration.
+The returned metrics have interpretive limitations. A vessel-mask density is **not** measured flow speed, and FAZ mm² requires lateral metadata. A passed QC flag means only that the supplied heuristic did not flag the volume, not that segmentation is correct.
 
-## API overview
+## Scientific notes, privacy and rights
 
-All requests are served locally through FastAPI. A browsable schema is available at **http://127.0.0.1:8000/docs**.
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/api/health` | Server health |
-| `GET` | `/api/datasets` | Dataset library |
-| `POST` | `/api/datasets` | Multipart `structural`, optional `flow`, `name`, calibration, `max_slices` (`0` means full resolution) |
-| `GET` | `/api/jobs/{id}` | Async processing progress or failure |
-| `GET` | `/api/datasets/{id}` | Metadata, QC and pipeline description |
-| `GET` | `/api/datasets/{id}/bscan/{index}?overlay=true` | Image with estimated boundaries |
-| `GET` | `/api/datasets/{id}/enface/{layer}` | Image (`structural`, `svc`, `dvc`, `avc`, `cc`, `choroid`) |
-| `GET` | `/api/datasets/{id}/analyze/{layer}?threshold=52` | Vessel mask metrics and FAZ detection |
-| `GET` | `/api/datasets/{id}/mask/{layer}?threshold=52` | Image overlay with vessel mask, seed, FAZ contour |
-| `GET` | `/api/datasets/{id}/surface?step=6` | Decimated retinal boundary matrices for 3D |
-| `GET` | `/api/datasets/{id}/export?threshold=52` | Reproducibility ZIP and CSV |
-
-### Data layout
-
-```text
-OCTAVE input (always 3D)
-B-scan / slow axis   Y (e.g. 448)
-Depth / axial axis   Z (e.g. 1024)
-A-scan / fast axis   X (e.g. 448)
-shape = (Y, Z, X)
-```
-
-For `.npz`, use array name `structural` or `flow`, or provide only one array. ZIP file names are sorted numerically (`image.0001.png`, `image.0002.png`, …). PNG images are read as 8-bit luminance; high bit-depth numeric volumes are percentile-normalized before segmentation, and this contrast transform makes absolute instrument intensity comparisons invalid. Image orientation is **not** automatically repaired.
-
-## Analysis methods and caveats
-
-1. **Boundaries:** default `app.fast_segmentation.segment_fast` extracts intensity-derived ILM/RPE and geometry-based IPL/INL and OPL/ONL proxies, with smoothing and basic QC. This makes interactive processing feasible but is **not** a validated trained layer segmenter. The original, more complex user-supplied dynamic-programming tracer remains included in `backend/octa_pipeline/`. Set `OCTAVE_SEGMENTER=legacy` to use it; it may be much slower or unsuitable for new scanner geometries.
-2. **OCTA reconstruction:** paired flow volumes pass through the provided experimental despeckling, bulk-motion correction, depth-resolved shadow attenuation and anatomical-slab projections. SVC/DVC boundaries remain uncertain when used on unknown devices. The choroid slab is **not** a trained Choroidalyzer region in default mode.
-3. **Vessels:** percentile thresholding acts on normalized displayed en face projections. `vessel_density_pct` is the binary *fraction of image area*, **not** flow velocity, clinical perfusion index or unbiased vessel density. Skeleton length is a rough pixel-path metric without diagonal correction.
-4. **FAZ:** the algorithm derives a vessel mask from that same SVC image, closes gaps morphologically, takes the connected non-vessel region around a central/thickness-minimum/manual seed, and refuses regions that contact the border or fall outside a size range (0.3%–12% of image). This mirrors the supplied `seg_v6_faz.py` approach. `faz_detected=false` means **not detected**, never an area of zero.
-5. **Quality:** image segmentation can be badly wrong despite passing basic automated QC, particularly for fluid, atrophy, poor SNR, unusual acquisition protocols, hardware scaling differences and projection artifacts. Use expert overlays and annotation-based validation.
-6. **Provenance:** exported `metadata.json` includes input SHA-256 hashes, scan sampling, processing method and QC. `analysis_settings.json` records threshold and seed. Numeric units are explicitly labeled.
-
-## Repository layout
-
-```text
-backend/
-  app/main.py                FastAPI, jobs, file endpoints and exports
-  app/io.py                  Safe-ish limited ZIP/NPY/TIFF import and shape validation
-  app/fast_segmentation.py   Fast experimental boundary estimation
-  app/analysis.py            Flow projections, vessel masks, FAZ and metrics
-  app/demo.py                Deterministic synthetic phantom, generated locally
-  octa_pipeline/             User-supplied experimental Python algorithms (unmodified)
-  tests/                     Unit and HTTP smoke tests
-frontend/
-  dist/                      Shippable zero-build interactive browser UI
-  src/                       React + TypeScript + Recharts + Three.js source
-  package.json               Node project, optional development pathway
-.github/workflows/ci.yml     Python tests and React build job
-scripts/                     CLI and smoke-test utilities
-docs/                        Methodology and deployment notes
-```
-
-## Tests
-
-```bash
-cd backend
-pip install -r requirements-dev.txt
-pytest -q
-```
-
-Backend tests cover input validation, FAZ success/failure, physical-unit gating and a FastAPI synthetic-study smoke test. A separate 16-frame processing smoke test against the **uploaded patient-1 structural + flow pair** successfully produced `structural`, `svc`, `dvc`, `avc`, `cc` and `choroid` outputs; that patient data is **not** copied into the repository. The site includes live Python backend endpoints. The React npm build was not executed in the provided no-network environment.
-
-## Privacy, licensing and citation
-
-**Private by default:** local `backend/runtime-data` is generated during use and Git-ignored; no authentication is implemented. De-identify inputs. Do not expose the app as a public service as-is.
-
-New OCTAVE glue, UI and original application code can be used under the project's MIT license. **The `backend/octa_pipeline/` package originated from user-provided source archives and has no license text in the archive; this project does not assert a redistribution license for that material. Confirm the code owner's rights before publication.** Choroidalyzer model code/weights and the unrelated `FAZ_Extraction.zip` are **not** embedded. OCTolyzer is linked as methodological inspiration only—not copied.
-
-Consider citing OCTolyzer: Burke et al., *OCTolyzer: Fully automatic toolkit for segmentation and feature extracting in optical coherence tomography and scanning laser ophthalmoscopy data*, arXiv:2407.14128 (2024), and Choroidalyzer: Engelmann et al., *Investigative Ophthalmology & Visual Science*, 65(6):6 (2024). Use method-specific references and your validation protocol in any publication.
-
-## What would make this suitable for publication-grade generalization?
-
-See `docs/VALIDATION.md` and `docs/PUBLISH_TO_GITHUB.md`: curated expert-labeled multi-device datasets, DICOM/Heidelberg metadata readers, learned retinal boundaries, formal repeatability/reproducibility studies, segmentation correction workflows and stratified performance dashboards.
+- [Validation checklist](docs/VALIDATION.md) · [Deployment](docs/DEPLOYMENT.md) · [GitHub publication](docs/PUBLISH_TO_GITHUB.md).
+- The import API has **no user authentication**. Keep it on localhost or a private secured network; do not put it directly on the internet or upload identifiable patient data to unsecured services.
+- MIT applies to newly authored OCTAVE wrapper and interface code. The included `backend/octa_pipeline/` and `research/reference-scripts/` were supplied by the user without license proof, so confirm redistribution rights before making a public repository.
+- Inspiration: [OCTolyzer](https://github.com/jaburke166/OCTolyzer) and [Choroidalyzer](https://github.com/justinengelmann/Choroidalyzer); this repo does not ship their model weights or declare clinical equivalence.
